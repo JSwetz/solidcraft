@@ -2,7 +2,6 @@
 //! parameters, that cross another chord of the face although the curves they stand for do not
 //! (two curves running closer together than their chords sag).
 
-use crate::eval::EvalSurface;
 
 use super::seam;
 use super::uv;
@@ -34,9 +33,9 @@ impl Chord {
 /// copies of two chords, whole periods apart, cross; chords ending on a pole, where the
 /// parameter along the pole is free, are left out. Adjacent chords of a loop share a node and
 /// never cross. `reach`: how near a pole a node is taken as one (see [`uv::degenerate_within`]).
-pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec<(usize, usize)> {
+pub(crate) fn crossing(s: &super::poles::Face, reach: f64, loops: &[seam::Loop]) -> Vec<(usize, usize)> {
     let dom = uv::domain(s);
-    let pole = |q: [f64; 2]| (0..2).any(|d| uv::degenerate_within(s, &dom, q, d, reach));
+    let pole = |q: [f64; 2]| (0..2).any(|d| s.pole(q, d, reach));
     let mut chords: Vec<Chord> = Vec::new();
     for (li, l) in loops.iter().enumerate() {
         let n = l.uv.len();
