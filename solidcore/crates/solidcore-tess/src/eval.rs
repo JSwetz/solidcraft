@@ -136,9 +136,15 @@ impl TessPlan {
             let base = out.positions.len();
             let surface = f.surface.and_then(|i| self.surfaces.get(i as usize));
             let (mut positions, mut normals) = (Vec::with_capacity(f.uv.len()), Vec::with_capacity(f.uv.len()));
+            // At a degenerate point (a cone's apex, a sphere's pole) the kernel's exact limit
+            // normal, from the second partials, made for the face only where it has one.
+            let mut kernel: Option<solidcore::eval::EvalSurface> = None;
             for (k, uv) in f.uv.iter().enumerate() {
                 let (p, n) = match surface {
-                    Some(s) => s.eval(uv[0], uv[1]),
+                    Some(s) => s.regular(uv[0], uv[1]).unwrap_or_else(|| {
+                        let k = kernel.get_or_insert_with(|| crate::mesher::poles::kernel_form(s));
+                        k.eval(uv[0], uv[1]).map(solidcore_convert::record_pair).unwrap_or_else(|_| s.eval(uv[0], uv[1]))
+                    }),
                     None => (Vec3::ZERO, f.normals.get(k).copied().unwrap_or(Vec3::Z)),
                 };
                 let p = f.fixed.get(k).copied().unwrap_or(p);
@@ -320,8 +326,7 @@ impl EvalSurface {
     /// that still fails gives the origin and +Z rather than a NaN.
     pub fn eval(&self, u: f64, v: f64) -> (Vec3, Vec3) {
         let Some((p, du, dv)) = self.derivs(u, v) else { return (Vec3::ZERO, Vec3::Z) };
-        let n = self.oriented(du.cross(dv));
-        if let Some(n) = n.normalized().filter(|_| n.len2() > 1e-20 * (du.len2() * dv.len2()).max(1e-300)) {
+        if let Some(n) = self.regular_normal(du, dv) {
             return (p, n);
         }
         // Step into the parameter domain around the degenerate point: never past the end of an
@@ -339,6 +344,20 @@ impl EvalSurface {
             }
         }
         (p, Vec3::Z)
+    }
+
+    /// The unit normal from the first partials `du` and `dv`, oriented as the surface; `None` at
+    /// a degenerate point, where they are parallel or one vanishes.
+    fn regular_normal(&self, du: Vec3, dv: Vec3) -> Option<Vec3> {
+        let n = self.oriented(du.cross(dv));
+        n.normalized().filter(|_| n.len2() > 1e-20 * (du.len2() * dv.len2()).max(1e-300))
+    }
+
+    /// Point and unit normal at `(u, v)` where the surface has one there from its first
+    /// partials; `None` at a degenerate point (a cone's apex, a sphere's pole) or off the surface.
+    pub fn regular(&self, u: f64, v: f64) -> Option<(Vec3, Vec3)> {
+        let (p, du, dv) = self.derivs(u, v)?;
+        Some((p, self.regular_normal(du, dv)?))
     }
 
     /// The active parameter interval along `d` (0: u, 1: v) of a spline, or of a revolution's
